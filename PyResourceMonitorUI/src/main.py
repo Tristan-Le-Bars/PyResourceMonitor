@@ -1,4 +1,4 @@
-from processesCollector import ProceccesCollector
+from processesCollector import ProcessesCollector
 import ctypes
 import time
 
@@ -14,12 +14,15 @@ def is_admin():
         return False
 
 def main():
-    processes_collector = ProceccesCollector()
+    processes_collector = ProcessesCollector()
     while True:
         # time.sleep(1)
+        start_time = time.time()
         processes_collector.fill_processes_dicts()
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        print(f'iteration time = {elapsed_time}')
         # processes_collector.print_cpu_process_dict()
-        print("test")
 
 
 if __name__ == "__main__":
