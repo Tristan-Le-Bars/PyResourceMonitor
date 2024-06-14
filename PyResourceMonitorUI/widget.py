@@ -3,12 +3,14 @@ import os
 from PyQt5 import uic
 from PyQt5.QtWidgets import QApplication, QMainWindow, QTableWidgetItem, QTableWidget, QPushButton, QGroupBox, QVBoxLayout
 from PyQt5.QtChart import QChart, QChartView, QLineSeries
-from PyQt5.QtCore import QTimer
+from PyQt5.QtCore import QThread, pyqtSignal
 
 # Add the src directory to the Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
 from processesCollector import ProcessesCollector
+from worker import Worker
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -17,6 +19,7 @@ class MainWindow(QMainWindow):
         uic.loadUi('form.ui', self)
 
         self.cpu_usage_history = []
+        self.ram_usage_history = []
 
         # Access the table widgets
         self.cpuTableWidget = self.findChild(QTableWidget, 'cpu_table')
@@ -25,27 +28,43 @@ class MainWindow(QMainWindow):
         self.networkTableWidget = self.findChild(QTableWidget, 'network_table')
 
         self.cpuGroupBoxWidget = self.findChild(QGroupBox, 'cpu_groupbox')
+        self.ramGroupBoxWidget = self.findChild(QGroupBox, 'ram_groupbox')
+        self.storageGroupBoxWidget = self.findChild(QGroupBox, 'storage_groupbox')
+        self.networkGroupBoxWidget = self.findChild(QGroupBox, 'network_groupbox')
 
         self.refreshButton = self.findChild(QPushButton, 'refresh_button')
         self.refreshButton.clicked.connect(self.refresh_tables)
 
-
-
         self.collector = ProcessesCollector()
         self.populate_tables()
 
+        self.plot_cpu()
+        self.plot_ram()
 
-        self.plot()
+        # Create and start the worker thread
+        self.worker = Worker(self.collector)
+        self.worker.data_updated.connect(self.update_tables_and_plot)
+        self.worker.start()
 
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.refresh_tables)
-        self.timer.start(1000)
+    def update_tables_and_plot(self, cpu_dict, ram_dict, storage_dict, network_dict, total_cpu_percent, total_ram_percent):
+        self.populate_cpu_table(cpu_dict)
+        self.populate_ram_table(ram_dict)
+        self.populate_storage_table(storage_dict)
+        self.populate_network_table(network_dict)
 
+        self.cpu_usage_history.append(total_cpu_percent)
+        self.ram_usage_history.append(total_ram_percent)
+
+        if len(self.cpu_usage_history) > 10:
+            self.cpu_usage_history.pop(0)
+        if len(self.ram_usage_history) > 10:
+            self.ram_usage_history.pop(0)
+
+        self.plot_cpu()
+        self.plot_ram()
 
     def refresh_tables(self):
         self.populate_tables()
-        self.plot()
-
 
     def populate_tables(self):
         self.collector.fill_processes_dicts()  # Collect the processes information
@@ -54,8 +73,9 @@ class MainWindow(QMainWindow):
         self.populate_storage_table()
         self.populate_network_table()
 
-    def populate_cpu_table(self):
-        cpu_dict = self.collector.cpu_process_dict
+    def populate_cpu_table(self, cpu_dict=None):
+        if cpu_dict is None:
+            cpu_dict = self.collector.cpu_process_dict
 
         self.cpuTableWidget.setColumnCount(8)
         self.cpuTableWidget.setRowCount(len(cpu_dict))
@@ -87,13 +107,15 @@ class MainWindow(QMainWindow):
 
         print(self.cpu_usage_history)
 
-
-    def populate_ram_table(self):
-        ram_dict = self.collector.ram_process_dict
+    def populate_ram_table(self, ram_dict=None):
+        if ram_dict is None:
+            ram_dict = self.collector.ram_process_dict
 
         self.ramTableWidget.setColumnCount(8)
         self.ramTableWidget.setRowCount(len(ram_dict))
         self.ramTableWidget.setHorizontalHeaderLabels(['PID', 'Name', 'User', 'Create Time', 'RSS', 'VMS', 'Shared', 'Memory Percent'])
+
+        total_ram_percent = 0.0
 
         for row, pid in enumerate(ram_dict):
             self.ramTableWidget.setItem(row, 0, QTableWidgetItem(str(pid)))
@@ -108,10 +130,19 @@ class MainWindow(QMainWindow):
             memory_percent_formatted = f"{ram_dict[pid]['memory_percent']:.4f}"
             self.ramTableWidget.setItem(row, 7, QTableWidgetItem(memory_percent_formatted))
 
-    def populate_storage_table(self):
-        storage_dict = self.collector.storage_process_dict
+            total_ram_percent += ram_dict[pid]['memory_percent']
 
-        # Define the number of columns based on your dictionary structure
+        self.ram_usage_history.append(total_ram_percent)
+
+        if len(self.ram_usage_history) > 10:
+            self.ram_usage_history.pop(0)
+
+        print(self.ram_usage_history)
+
+    def populate_storage_table(self, storage_dict=None):
+        if storage_dict is None:
+            storage_dict = self.collector.storage_process_dict
+
         self.storageTableWidget.setColumnCount(9)
         self.storageTableWidget.setRowCount(len(storage_dict))
         self.storageTableWidget.setHorizontalHeaderLabels(['PID', 'Name', 'User', 'Create Time', 'Files', 'Read Count', 'Write Count', 'Read Bytes', 'Write Bytes'])
@@ -127,10 +158,10 @@ class MainWindow(QMainWindow):
             self.storageTableWidget.setItem(row, 7, QTableWidgetItem(str(storage_dict[pid]['read_bytes'])))
             self.storageTableWidget.setItem(row, 8, QTableWidgetItem(str(storage_dict[pid]['write_bytes'])))
 
-    def populate_network_table(self):
-        network_dict = self.collector.network_process_dict
+    def populate_network_table(self, network_dict=None):
+        if network_dict is None:
+            network_dict = self.collector.network_process_dict
 
-        # Define the number of columns based on your dictionary structure
         self.networkTableWidget.setColumnCount(9)
         self.networkTableWidget.setRowCount(len(network_dict))
         self.networkTableWidget.setHorizontalHeaderLabels(['PID', 'Name', 'User', 'Create Time', 'Laddr', 'Raddr', 'Status', 'Bytes Sent', 'Bytes Recv'])
@@ -146,7 +177,7 @@ class MainWindow(QMainWindow):
             self.networkTableWidget.setItem(row, 7, QTableWidgetItem(str(network_dict[pid]['bytes_sent'])))
             self.networkTableWidget.setItem(row, 8, QTableWidgetItem(str(network_dict[pid]['bytes_recv'])))
 
-    def plot(self):
+    def plot_cpu(self):
         # Create the line series data from cpu_usage_history
         series = QLineSeries()
         for i, value in enumerate(self.cpu_usage_history):
@@ -180,6 +211,43 @@ class MainWindow(QMainWindow):
             layout.addWidget(chart_view)
             self.cpuGroupBoxWidget.setLayout(layout)
 
+    def plot_ram(self):
+        # Create the line series data from ram_usage_history
+        series = QLineSeries()
+        for i, value in enumerate(self.ram_usage_history):
+            series.append(i, value)
+
+        # Create the chart
+        chart = QChart()
+        chart.addSeries(series)
+        chart.createDefaultAxes()
+        chart.setTitle("RAM Usage History")
+        chart.legend().hide()
+        axisY = chart.axisY()
+        axisY.setRange(0, 100)
+
+        # Create the chart view
+        chart_view = QChartView(chart)
+
+        # Check if the ram_groupbox already has a layout
+        if self.ramGroupBoxWidget.layout() is not None:
+            # Remove the old widgets from the layout
+            old_layout = self.ramGroupBoxWidget.layout()
+            while old_layout.count():
+                item = old_layout.takeAt(0)
+                if item.widget() is not None:
+                    item.widget().deleteLater()
+            # Add the new chart view to the existing layout
+            old_layout.addWidget(chart_view)
+        else:
+            # Create and set the new layout if there is none
+            layout = QVBoxLayout(self.ramGroupBoxWidget)
+            layout.addWidget(chart_view)
+            self.ramGroupBoxWidget.setLayout(layout)
+
+    def closeEvent(self, event):
+        self.worker.stop()
+        event.accept()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
