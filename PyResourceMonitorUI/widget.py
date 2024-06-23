@@ -20,6 +20,9 @@ class MainWindow(QMainWindow):
 
         self.cpu_usage_history = []
         self.ram_usage_history = []
+        self.storage_writting_history = []
+        self.storage_reading_history = []
+        self.plots_size = 20
 
         # Access the table widgets
         self.cpuTableWidget = self.findChild(QTableWidget, 'cpu_table')
@@ -40,13 +43,15 @@ class MainWindow(QMainWindow):
 
         self.plot_cpu()
         self.plot_ram()
+        self.plot_storage()
 
         # Create and start the worker thread
         self.worker = Worker(self.collector)
         self.worker.data_updated.connect(self.update_tables_and_plot)
+        # recherche
         self.worker.start()
 
-    def update_tables_and_plot(self, cpu_dict, ram_dict, storage_dict, network_dict, total_cpu_percent, total_ram_percent):
+    def update_tables_and_plot(self, cpu_dict, ram_dict, storage_dict, network_dict, total_cpu_percent, total_ram_percent, total_storage_writting, total_storage_reading):
         self.populate_cpu_table(cpu_dict)
         self.populate_ram_table(ram_dict)
         self.populate_storage_table(storage_dict)
@@ -54,14 +59,21 @@ class MainWindow(QMainWindow):
 
         self.cpu_usage_history.append(total_cpu_percent)
         self.ram_usage_history.append(total_ram_percent)
+        self.storage_writting_history.append(total_storage_writting)
+        self.storage_reading_history.append(total_storage_reading)
 
-        if len(self.cpu_usage_history) > 10:
+        if len(self.cpu_usage_history) > self.plots_size:
             self.cpu_usage_history.pop(0)
-        if len(self.ram_usage_history) > 10:
+        if len(self.ram_usage_history) > self.plots_size:
             self.ram_usage_history.pop(0)
+        if len(self.storage_writting_history) > self.plots_size:
+            self.storage_writting_history.pop(0)
+        if len(self.storage_reading_history) > self.plots_size:
+            self.storage_reading_history.pop(0)
 
         self.plot_cpu()
         self.plot_ram()
+        self.plot_storage()
 
     def refresh_tables(self):
         self.populate_tables()
@@ -97,15 +109,7 @@ class MainWindow(QMainWindow):
 
             self.cpuTableWidget.setItem(row, 7, QTableWidgetItem(str(cpu_dict[pid]['num_threads'])))
 
-            total_cpu_percent += cpu_dict[pid]['cpu_percent']  # Ajouter le cpu_percent au total
-
-        self.cpu_usage_history.append(total_cpu_percent)  # Ajouter la somme totale à l'historique
-
-        # Ensure the history list does not exceed 10 elements
-        if len(self.cpu_usage_history) > 10:
-            self.cpu_usage_history.pop(0)
-
-        print(self.cpu_usage_history)
+        #print(self.cpu_usage_history)
 
     def populate_ram_table(self, ram_dict=None):
         if ram_dict is None:
@@ -130,18 +134,14 @@ class MainWindow(QMainWindow):
             memory_percent_formatted = f"{ram_dict[pid]['memory_percent']:.4f}"
             self.ramTableWidget.setItem(row, 7, QTableWidgetItem(memory_percent_formatted))
 
-            total_ram_percent += ram_dict[pid]['memory_percent']
-
-        self.ram_usage_history.append(total_ram_percent)
-
-        if len(self.ram_usage_history) > 10:
-            self.ram_usage_history.pop(0)
-
-        print(self.ram_usage_history)
+        #print(self.ram_usage_history)
 
     def populate_storage_table(self, storage_dict=None):
         if storage_dict is None:
             storage_dict = self.collector.storage_process_dict
+
+        total_writting = 0.0
+        total_reading = 0.0
 
         self.storageTableWidget.setColumnCount(9)
         self.storageTableWidget.setRowCount(len(storage_dict))
@@ -157,6 +157,12 @@ class MainWindow(QMainWindow):
             self.storageTableWidget.setItem(row, 6, QTableWidgetItem(str(storage_dict[pid]['write_count'])))
             self.storageTableWidget.setItem(row, 7, QTableWidgetItem(str(storage_dict[pid]['read_bytes'])))
             self.storageTableWidget.setItem(row, 8, QTableWidgetItem(str(storage_dict[pid]['write_bytes'])))
+
+
+
+        print(self.storage_writting_history)
+        print(self.storage_reading_history)
+
 
     def populate_network_table(self, network_dict=None):
         if network_dict is None:
@@ -244,6 +250,46 @@ class MainWindow(QMainWindow):
             layout = QVBoxLayout(self.ramGroupBoxWidget)
             layout.addWidget(chart_view)
             self.ramGroupBoxWidget.setLayout(layout)
+
+    def plot_storage(self):
+        # Create the line series data from ram_usage_history
+        writting_series = QLineSeries()
+        for i, value in enumerate(self.storage_writting_history):
+            writting_series.append(i, value)
+
+        reading_series = QLineSeries()
+        for i, value in enumerate(self.storage_reading_history):
+            reading_series.append(i, value)
+
+
+        # Create the chart
+        chart = QChart()
+        chart.addSeries(writting_series)
+        chart.addSeries(reading_series)
+        chart.createDefaultAxes()
+        chart.setTitle("Storeadin reading/writting History")
+        chart.legend().hide()
+        axisY = chart.axisY()
+        #axisY.setRange(0, 100)
+
+        # Create the chart view
+        chart_view = QChartView(chart)
+
+        # Check if the ram_groupbox already has a layout
+        if self.storageGroupBoxWidget.layout() is not None:
+            # Remove the old widgets from the layout
+            old_layout = self.storageGroupBoxWidget.layout()
+            while old_layout.count():
+                item = old_layout.takeAt(0)
+                if item.widget() is not None:
+                    item.widget().deleteLater()
+            # Add the new chart view to the existing layout
+            old_layout.addWidget(chart_view)
+        else:
+            # Create and set the new layout if there is none
+            layout = QVBoxLayout(self.storageGroupBoxWidget)
+            layout.addWidget(chart_view)
+            self.storageGroupBoxWidget.setLayout(layout)
 
     def closeEvent(self, event):
         self.worker.stop()
