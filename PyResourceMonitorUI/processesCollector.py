@@ -57,7 +57,6 @@ class ProcessesCollector:
                     }
 
                 connections = proc.info['connections']
-                io_counters = proc.info['io_counters']
                 if connections:
                     for conn in connections:
                         if conn.status == psutil.CONN_ESTABLISHED:
@@ -67,9 +66,7 @@ class ProcessesCollector:
                                 'create_time': proc.info['create_time'],
                                 'laddr': f"{conn.laddr.ip}:{conn.laddr.port}",
                                 'raddr': f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else None,
-                                'status': conn.status,
-                                'bytes_sent': getattr(io_counters, 'bytes_sent', None) if io_counters else None,
-                                'bytes_recv': getattr(io_counters, 'bytes_recv', None) if io_counters else None
+                                'status': conn.status
                             }
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue

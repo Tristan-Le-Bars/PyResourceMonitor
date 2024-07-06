@@ -1,9 +1,10 @@
 import sys
 import os
 from PyQt5 import uic
-from PyQt5.QtWidgets import QApplication, QMainWindow, QTableWidgetItem, QTableWidget, QPushButton, QGroupBox, QVBoxLayout
+from PyQt5.QtWidgets import QApplication, QMainWindow, QTableWidgetItem, QTableWidget, QPushButton, QGroupBox, QVBoxLayout, QSpinBox, QMessageBox
 from PyQt5.QtChart import QChart, QChartView, QLineSeries
 from PyQt5.QtCore import QThread, pyqtSignal
+import psutil
 
 # Add the src directory to the Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
@@ -22,6 +23,14 @@ class MainWindow(QMainWindow):
         self.ram_usage_history = []
         self.storage_writting_history = []
         self.storage_reading_history = []
+        self.network_receiving_history = []
+        self.network_sending_history = []
+
+        self.max_storage_writting = 0.0
+        self.max_storage_reading = 0.0
+        self.max_network_receiving = 0.0
+        self.max_network_sending = 0.0
+
         self.plots_size = 20
 
         # Access the table widgets
@@ -35,8 +44,9 @@ class MainWindow(QMainWindow):
         self.storageGroupBoxWidget = self.findChild(QGroupBox, 'storage_groupbox')
         self.networkGroupBoxWidget = self.findChild(QGroupBox, 'network_groupbox')
 
-        self.refreshButton = self.findChild(QPushButton, 'refresh_button')
-        self.refreshButton.clicked.connect(self.refresh_tables)
+        self.terminateButton = self.findChild(QPushButton, 'terminate')
+        self.terminateButton.clicked.connect(self.terminate_process)
+        self.pidSpinbox = self.findChild(QSpinBox, 'pid_spinbox')
 
         self.collector = ProcessesCollector()
         self.populate_tables()
@@ -44,6 +54,7 @@ class MainWindow(QMainWindow):
         self.plot_cpu()
         self.plot_ram()
         self.plot_storage()
+        self.plot_network()
 
         # Create and start the worker thread
         self.worker = Worker(self.collector)
@@ -51,35 +62,95 @@ class MainWindow(QMainWindow):
         # recherche
         self.worker.start()
 
-    def update_tables_and_plot(self, cpu_dict, ram_dict, storage_dict, network_dict, total_cpu_percent, total_ram_percent, total_storage_writting, total_storage_reading):
+    def terminate_process(self):
+        pid = self.pidSpinbox.value()
+        print(f"Tentative de terminaison du processus avec le PID {pid}")
+        try:
+            proc = psutil.Process(pid)
+            proc_name = proc.name()
+
+            # Trouver tous les processus avec le même nom
+            processes = [p for p in psutil.process_iter(['pid', 'name']) if p.info['name'] == proc_name]
+
+            for p in processes:
+                try:
+                    print(f"Tentative de terminaison du processus: {p.info['name']} (PID: {p.info['pid']})")
+                    p.terminate()
+                    try:
+                        p.wait(timeout=3)
+                    except psutil.TimeoutExpired:
+                        p.kill()
+                        p.wait(timeout=3)
+
+                    if not p.is_running():
+                        print(f"Processus {p.info['pid']} terminé avec succès.")
+                    else:
+                        print(f"Le processus {p.info['pid']} n'a pas pu être terminé.")
+                except psutil.NoSuchProcess:
+                    print(f"Aucun processus trouvé avec le PID {p.info['pid']}.")
+                except psutil.AccessDenied:
+                    print(f"Accès refusé pour terminer le processus avec le PID {p.info['pid']}.")
+
+            QMessageBox.information(self, 'Succès', f"Tous les processus liés à {proc_name} ont été terminés.")
+        except psutil.NoSuchProcess:
+            print(f"Aucun processus trouvé avec le PID {pid}.")
+            QMessageBox.warning(self, 'Erreur', f"Aucun processus trouvé avec le PID {pid}.")
+        except psutil.AccessDenied:
+            print(f"Accès refusé pour terminer le processus avec le PID {pid}.")
+            QMessageBox.warning(self, 'Erreur', f"Accès refusé pour terminer le processus avec le PID {pid}.")
+
+
+
+
+    def update_tables_and_plot(self, cpu_dict, ram_dict, storage_dict, network_dict, total_cpu_percent, total_ram_percent, total_storage_writting, total_storage_reading, total_network_receiving, total_network_sending):
         self.populate_cpu_table(cpu_dict)
         self.populate_ram_table(ram_dict)
         self.populate_storage_table(storage_dict)
         self.populate_network_table(network_dict)
-
+        if total_cpu_percent > 100.0:
+            total_cpu_percent = 100.0
         self.cpu_usage_history.append(total_cpu_percent)
+        if total_ram_percent > 100.0:
+            total_ram_percent = 100.0
         self.ram_usage_history.append(total_ram_percent)
         self.storage_writting_history.append(total_storage_writting)
         self.storage_reading_history.append(total_storage_reading)
+        self.network_receiving_history.append(total_network_receiving)
+        self.network_sending_history.append(total_network_sending)
 
+        if  len(self.cpu_usage_history) > 0:
+            if self.storage_writting_history[-1] > self.max_storage_writting:
+                self.max_storage_writting = self.storage_writting_history[-1]
+            if self.storage_reading_history[-1] > self.max_storage_reading:
+                self.max_storage_reading = self.storage_reading_history[-1]
+            if self.network_receiving_history[-1] > self.max_network_receiving:
+                self.max_network_receiving = self.network_receiving_history[-1]
+            if self.network_sending_history[-1] > self.max_network_sending:
+                self.max_network_sending = self.network_sending_history[-1]
         if len(self.cpu_usage_history) > self.plots_size:
             self.cpu_usage_history.pop(0)
-        if len(self.ram_usage_history) > self.plots_size:
+        #if len(self.ram_usage_history) > self.plots_size:
             self.ram_usage_history.pop(0)
-        if len(self.storage_writting_history) > self.plots_size:
+        #if len(self.storage_writting_history) > self.plots_size:
             self.storage_writting_history.pop(0)
-        if len(self.storage_reading_history) > self.plots_size:
+        #if len(self.storage_reading_history) > self.plots_size:
             self.storage_reading_history.pop(0)
+        #if len(self.network_receiving_history) > self.plots_size:
+            self.network_receiving_history.pop(0)
+        #if len(self.network_sending_history) > self.plots_size:
+            self.network_sending_history.pop(0)
 
         self.plot_cpu()
         self.plot_ram()
         self.plot_storage()
+        self.plot_network()
 
     def refresh_tables(self):
         self.populate_tables()
 
     def populate_tables(self):
-        self.collector.fill_processes_dicts()  # Collect the processes information
+
+        self.collector.fill_processes_dicts()
         self.populate_cpu_table()
         self.populate_ram_table()
         self.populate_storage_table()
@@ -93,7 +164,7 @@ class MainWindow(QMainWindow):
         self.cpuTableWidget.setRowCount(len(cpu_dict))
         self.cpuTableWidget.setHorizontalHeaderLabels(['PID', 'Name', 'User', 'Create Time', 'CPU Times', 'Status', 'CPU Percent', 'Num Threads'])
 
-        total_cpu_percent = 0.0  # Pour calculer la somme des cpu_percent
+        total_cpu_percent = 0.0
 
         for row, pid in enumerate(cpu_dict):
             self.cpuTableWidget.setItem(row, 0, QTableWidgetItem(str(pid)))
@@ -103,13 +174,11 @@ class MainWindow(QMainWindow):
             self.cpuTableWidget.setItem(row, 4, QTableWidgetItem(str(cpu_dict[pid]['cpu_times'])))
             self.cpuTableWidget.setItem(row, 5, QTableWidgetItem(cpu_dict[pid]['status']))
 
-            # Format the CPU percent with more precision
             cpu_percent_formatted = f"{cpu_dict[pid]['cpu_percent']:.4f}"
             self.cpuTableWidget.setItem(row, 6, QTableWidgetItem(cpu_percent_formatted))
 
             self.cpuTableWidget.setItem(row, 7, QTableWidgetItem(str(cpu_dict[pid]['num_threads'])))
 
-        #print(self.cpu_usage_history)
 
     def populate_ram_table(self, ram_dict=None):
         if ram_dict is None:
@@ -130,11 +199,9 @@ class MainWindow(QMainWindow):
             self.ramTableWidget.setItem(row, 5, QTableWidgetItem(str(ram_dict[pid]['vms'])))
             self.ramTableWidget.setItem(row, 6, QTableWidgetItem(str(ram_dict[pid]['shared'])))
 
-            # Format the memory percent with more precision
             memory_percent_formatted = f"{ram_dict[pid]['memory_percent']:.4f}"
             self.ramTableWidget.setItem(row, 7, QTableWidgetItem(memory_percent_formatted))
 
-        #print(self.ram_usage_history)
 
     def populate_storage_table(self, storage_dict=None):
         if storage_dict is None:
@@ -160,17 +227,13 @@ class MainWindow(QMainWindow):
 
 
 
-        print(self.storage_writting_history)
-        print(self.storage_reading_history)
-
-
     def populate_network_table(self, network_dict=None):
         if network_dict is None:
             network_dict = self.collector.network_process_dict
 
-        self.networkTableWidget.setColumnCount(9)
+        self.networkTableWidget.setColumnCount(7)
         self.networkTableWidget.setRowCount(len(network_dict))
-        self.networkTableWidget.setHorizontalHeaderLabels(['PID', 'Name', 'User', 'Create Time', 'Laddr', 'Raddr', 'Status', 'Bytes Sent', 'Bytes Recv'])
+        self.networkTableWidget.setHorizontalHeaderLabels(['PID', 'Name', 'User', 'Create Time', 'Laddr', 'Raddr', 'Status'])
 
         for row, pid in enumerate(network_dict):
             self.networkTableWidget.setItem(row, 0, QTableWidgetItem(str(pid)))
@@ -180,8 +243,7 @@ class MainWindow(QMainWindow):
             self.networkTableWidget.setItem(row, 4, QTableWidgetItem(str(network_dict[pid]['laddr'])))
             self.networkTableWidget.setItem(row, 5, QTableWidgetItem(str(network_dict[pid]['raddr'])))
             self.networkTableWidget.setItem(row, 6, QTableWidgetItem(network_dict[pid]['status']))
-            self.networkTableWidget.setItem(row, 7, QTableWidgetItem(str(network_dict[pid]['bytes_sent'])))
-            self.networkTableWidget.setItem(row, 8, QTableWidgetItem(str(network_dict[pid]['bytes_recv'])))
+
 
     def plot_cpu(self):
         # Create the line series data from cpu_usage_history
@@ -252,7 +314,12 @@ class MainWindow(QMainWindow):
             self.ramGroupBoxWidget.setLayout(layout)
 
     def plot_storage(self):
-        # Create the line series data from ram_usage_history
+        max_height = 0.0
+        if self.max_storage_reading > self.max_storage_writting:
+            max_height = self.max_storage_reading
+        else:
+            max_height = self.max_storage_writting
+
         writting_series = QLineSeries()
         for i, value in enumerate(self.storage_writting_history):
             writting_series.append(i, value)
@@ -267,10 +334,10 @@ class MainWindow(QMainWindow):
         chart.addSeries(writting_series)
         chart.addSeries(reading_series)
         chart.createDefaultAxes()
-        chart.setTitle("Storeadin reading/writting History")
+        chart.setTitle("Storage reading/writting History")
         chart.legend().hide()
         axisY = chart.axisY()
-        #axisY.setRange(0, 100)
+        axisY.setRange(0, max_height)
 
         # Create the chart view
         chart_view = QChartView(chart)
@@ -290,6 +357,55 @@ class MainWindow(QMainWindow):
             layout = QVBoxLayout(self.storageGroupBoxWidget)
             layout.addWidget(chart_view)
             self.storageGroupBoxWidget.setLayout(layout)
+
+
+    def plot_network(self):
+        # Create the line series data from ram_usage_history
+        max_height = 0.0
+        if self.max_network_receiving > self.max_network_sending:
+            max_height = self.max_network_receiving
+        else:
+            max_height = self.max_network_sending
+
+        receive_series = QLineSeries()
+        for i, value in enumerate(self.network_receiving_history):
+            receive_series.append(i, value)
+
+        send_series = QLineSeries()
+        for i, value in enumerate(self.network_sending_history):
+            send_series.append(i, value)
+
+
+        # Create the chart
+        chart = QChart()
+        chart.addSeries(receive_series)
+        chart.addSeries(send_series)
+        chart.createDefaultAxes()
+        chart.setTitle("Network receiving/sending History")
+        chart.legend().hide()
+        axisY = chart.axisY()
+        axisY.setRange(0, max_height)
+
+        # Create the chart view
+        chart_view = QChartView(chart)
+
+        # Check if the ram_groupbox already has a layout
+        if self.networkGroupBoxWidget.layout() is not None:
+            # Remove the old widgets from the layout
+            old_layout = self.networkGroupBoxWidget.layout()
+            while old_layout.count():
+                item = old_layout.takeAt(0)
+                if item.widget() is not None:
+                    item.widget().deleteLater()
+            # Add the new chart view to the existing layout
+            old_layout.addWidget(chart_view)
+        else:
+            # Create and set the new layout if there is none
+            layout = QVBoxLayout(self.networkGroupBoxWidget)
+            layout.addWidget(chart_view)
+            self.networkGroupBoxWidget.setLayout(layout)
+
+
 
     def closeEvent(self, event):
         self.worker.stop()
